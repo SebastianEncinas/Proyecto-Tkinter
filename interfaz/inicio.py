@@ -1,37 +1,150 @@
 import tkinter as tk
 from tkinter import messagebox
+from tkinter import ttk
 from PIL import Image, ImageTk
+import sqlite3
+from datetime import datetime
+
+DB_NAME = "club.db"
+
+def conectar():
+    return sqlite3.connect(DB_NAME)
+
+def crear_tablas():
+    conn = conectar()
+    c = conn.cursor()
+
+    c.execute("""
+    CREATE TABLE IF NOT EXISTS socios (
+        id INTEGER PRIMARY KEY AUTOINCREMENT,
+        nombre_completo TEXT,
+        edad INTEGER,
+        tipo_identificacion TEXT,
+        identificacion TEXT,
+        nacionalidad TEXT,
+        usuario TEXT UNIQUE,
+        contrasena TEXT,
+        fecha_inscripcion TEXT,
+        estado TEXT
+    )
+    """)
+
+    c.execute("""
+    CREATE TABLE IF NOT EXISTS cuotas (
+        id INTEGER PRIMARY KEY AUTOINCREMENT,
+        socio_id INTEGER,
+        estado TEXT,
+        fecha_vencimiento TEXT,
+        periodo TEXT,
+        FOREIGN KEY(socio_id) REFERENCES socios(id)
+    )
+    """)
+
+    conn.commit()
+    conn.close()
+
+# =======================
+# NUEVA FUNCIÓN MODIFICADA
+# =======================
+def insertar_socio(socio):
+    conn = conectar()
+    c = conn.cursor()
+
+    try:
+        c.execute("""
+            INSERT INTO socios (
+                nombre_completo, edad, tipo_identificacion, identificacion,
+                nacionalidad, usuario, contrasena, fecha_inscripcion, estado
+            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
+        """, (
+            socio.nombre_completo, socio.edad, socio.tipo_identificacion,
+            socio.identificacion, socio.nacionalidad,
+            socio.usuario, socio.contrasena,
+            socio.fecha_inscripcion, socio.estado
+        ))
+        conn.commit()
+
+        socio_id = c.lastrowid
+        conn.close()
+        return socio_id
+
+    except sqlite3.IntegrityError:
+        # Usuario duplicado
+        conn.close()
+        return None
+
+
+def obtener_socio_por_credenciales(usuario, contrasena):
+    conn = conectar()
+    c = conn.cursor()
+    c.execute("""
+        SELECT id, nombre_completo, edad, tipo_identificacion,
+               identificacion, nacionalidad, usuario, contrasena,
+               fecha_inscripcion, estado
+        FROM socios
+        WHERE usuario = ? AND contrasena = ?
+    """, (usuario, contrasena))
+    row = c.fetchone()
+    conn.close()
+    return row
+
+def insertar_cuota_inicial(socio_id):
+    conn = conectar()
+    c = conn.cursor()
+    c.execute("""
+        INSERT INTO cuotas (socio_id, estado, fecha_vencimiento, periodo)
+        VALUES (?, ?, ?, ?)
+    """, (socio_id, "Pendiente", "2025-12-01", "2025-11"))
+    conn.commit()
+    conn.close()
+
+
+class Socio:
+    def __init__(self, nombre_completo, edad, tipo_identificacion,
+                 identificacion, nacionalidad, usuario, contrasena,
+                 estado):
+
+        self.nombre_completo = nombre_completo
+        self.edad = edad
+        self.tipo_identificacion = tipo_identificacion
+        self.identificacion = identificacion
+        self.nacionalidad = nacionalidad
+        self.usuario = usuario
+        self.contrasena = contrasena
+        self.estado = estado
+        self.fecha_inscripcion = datetime.today().strftime("%Y-%m-%d")
+
+
+# =======================
+# Tkinter
+# =======================
 
 FONDO_LOGIN = "../img/cancha.jpg"
 FONDO_HOME = "./media/fondo_home.jpg"
 
-# Ventana principal
 root = tk.Tk()
 root.title("Club Atlético Vélez Sarsfield")
 root.geometry("1000x600")
-
-# --- VARIABLES GLOBALES ---
-usuarios = {"S": {"password": "23", "cuota": "Al día"}} 
+root.configure(bg="navy")
 
 
-# --- FUNCIONES AUXILIARES ---
 def cargar_fondo(ruta, tamaño):
-    """Carga y ajusta una imagen de fondo si existe."""
     try:
         img = Image.open(ruta)
         img = img.resize(tamaño, Image.LANCZOS)
         return ImageTk.PhotoImage(img)
-    except Exception:
+    except:
         return None
 
-
 def limpiar_pantalla():
-    """Elimina todos los widgets actuales de la ventana."""
-    for widget in root.winfo_children():
-        widget.destroy()
+    for w in root.winfo_children():
+        w.destroy()
 
 
-# --- PANTALLA DE LOGIN ---
+
+# =======================
+# LOGIN
+# =======================
 def mostrar_login():
     limpiar_pantalla()
 
@@ -39,144 +152,163 @@ def mostrar_login():
     fondo_login_img = cargar_fondo(FONDO_LOGIN, (1000, 600))
     if fondo_login_img:
         tk.Label(root, image=fondo_login_img).place(x=0, y=0, relwidth=1, relheight=1)
-    else:
-        root.config(bg="#0033A0")
 
     frame = tk.Frame(root, bg="white", bd=5)
     frame.place(relx=0.5, rely=0.5, anchor="center")
 
     tk.Label(frame, text="Acceso al Club Vélez Sarsfield",
-             font=("Helvetica", 18, "bold"), fg="#0033A0", bg="white").grid(row=0, column=0, columnspan=2, pady=(0, 15))
+             font=("Helvetica", 18, "bold"), fg="#0033A0", bg="white").grid(row=0, column=0, columnspan=2, pady=15)
 
     tk.Label(frame, text="Usuario:", bg="white").grid(row=1, column=0, padx=5, pady=5)
     usuario_entry = tk.Entry(frame, width=25)
-    usuario_entry.grid(row=1, column=1, pady=5)
+    usuario_entry.grid(row=1, column=1)
 
     tk.Label(frame, text="Contraseña:", bg="white").grid(row=2, column=0, padx=5, pady=5)
     contrasena_entry = tk.Entry(frame, show="*", width=25)
-    contrasena_entry.grid(row=2, column=1, pady=5)
+    contrasena_entry.grid(row=2, column=1)
 
     def intentar_login():
-        user = usuario_entry.get().strip()
-        password = contrasena_entry.get().strip()
+        user = usuario_entry.get()
+        pwd = contrasena_entry.get()
 
-        if user == "" or password == "":
-            messagebox.showerror("Error", "Complete todos los campos requeridos")
-        elif user in usuarios and usuarios[user]["password"] == password:
-            mostrar_home(user)
+        socio = obtener_socio_por_credenciales(user, pwd)
+
+        if socio:
+            mostrar_home(socio)
         else:
-            messagebox.showerror("Error", "Usuario o Contraseña Incorrectos")
+            messagebox.showerror("Error", "Usuario o contraseña incorrectos")
 
-    def mostrar_registro():
-        limpiar_pantalla()
-        mostrar_pantalla_registro()
+    tk.Button(frame, text="Ingresar", bg="#0033A0", fg="white",
+              width=15, command=intentar_login).grid(row=3, column=0, columnspan=2, pady=10)
 
-    tk.Button(frame, text="Ingresar", bg="#0033A0", fg="white", width=15,
-              command=intentar_login).grid(row=3, column=0, columnspan=2, pady=(10, 5))
-
-    tk.Label(frame, text="¿No tenés una cuenta?", bg="white").grid(row=4, column=0, columnspan=2, pady=(5, 0))
-    tk.Button(frame, text="Registrarse", bg="#00A859", fg="white", width=15,
-              command=mostrar_registro).grid(row=5, column=0, columnspan=2, pady=5)
+    tk.Button(frame, text="Registrarse", bg="#00A859", fg="white",
+              width=15, command=mostrar_registro).grid(row=4, column=0, columnspan=2)
 
 
-# --- PANTALLA DE REGISTRO ---
-def mostrar_pantalla_registro():
+
+# =======================
+# REGISTRO
+# =======================
+def mostrar_registro():
+    limpiar_pantalla()
+
     frame = tk.Frame(root, bg="white", bd=5)
     frame.place(relx=0.5, rely=0.5, anchor="center")
 
     tk.Label(frame, text="Registro de Socio",
-             font=("Helvetica", 18, "bold"), fg="#0033A0", bg="white").grid(row=0, column=0, columnspan=2, pady=(0, 15))
+             font=("Helvetica", 18, "bold"), fg="#0033A0", bg="white").grid(row=0, column=0, columnspan=2, pady=10)
 
-    tk.Label(frame, text="Nuevo Usuario:", bg="white").grid(row=1, column=0, padx=5, pady=5)
-    nuevo_usuario = tk.Entry(frame, width=25)
-    nuevo_usuario.grid(row=1, column=1, pady=5)
+    campos = [
+        "Nombre completo",
+        "Edad",
+        "Tipo identificación",
+        "N° Identificación",
+        "Nacionalidad",
+        "Usuario",
+        "Contraseña"
+    ]
 
-    tk.Label(frame, text="Contraseña:", bg="white").grid(row=2, column=0, padx=5, pady=5)
-    nueva_contra = tk.Entry(frame, show="*", width=25)
-    nueva_contra.grid(row=2, column=1, pady=5)
+    entries = {}
+    row = 1
+    for campo in campos:
+        tk.Label(frame, text=campo + ":", bg="white").grid(row=row, column=0, sticky="e", padx=5, pady=5)
+        ent = tk.Entry(frame, width=25)
+        ent.grid(row=row, column=1, pady=5)
+        entries[campo] = ent
+        row += 1
 
-    def registrar_usuario():
-        user = nuevo_usuario.get().strip()
-        password = nueva_contra.get().strip()
+    def registrar():
+        try:
+            socio = Socio(
+                entries["Nombre completo"].get(),
+                int(entries["Edad"].get()),
+                entries["Tipo identificación"].get(),
+                entries["N° Identificación"].get(),
+                entries["Nacionalidad"].get(),
+                entries["Usuario"].get(),
+                entries["Contraseña"].get(),
+                "Activo"
+            )
+        except:
+            messagebox.showerror("Error", "Datos inválidos")
+            return
 
-        if user == "" or password == "":
-            messagebox.showerror("Error", "Debe completar todos los campos.")
-        elif user in usuarios:
-            messagebox.showerror("Error", "Ese usuario ya existe.")
-        else:
-            usuarios[user] = {"password": password, "cuota": "Pendiente"}
-            messagebox.showinfo("Éxito", "Registro completado. Ahora podés iniciar sesión.")
-            mostrar_login()
+        socio_id = insertar_socio(socio)
 
-    tk.Button(frame, text="Registrar", bg="#00A859", fg="white", width=15,
-              command=registrar_usuario).grid(row=3, column=0, columnspan=2, pady=(10, 5))
+        if socio_id is None:
+            messagebox.showerror("Error", "Este usuario ya está registrado.\nIngrese otro nombre de usuario.")
+            return
 
-    tk.Button(frame, text="Volver", bg="#0033A0", fg="white", width=15,
-              command=mostrar_login).grid(row=4, column=0, columnspan=2, pady=5)
+        insertar_cuota_inicial(socio_id)
+
+        messagebox.showinfo("Éxito", "Socio registrado correctamente")
+        mostrar_login()
+
+    tk.Button(frame, text="Registrar", bg="#00A859", fg="white",
+              width=15, command=registrar).grid(row=row, column=0, columnspan=2, pady=10)
+
+    tk.Button(frame, text="Volver", bg="#0033A0", fg="white",
+              width=15, command=mostrar_login).grid(row=row+1, column=0, columnspan=2, pady=5)
 
 
-# --- PANTALLA PRINCIPAL (HOME) ---
-def mostrar_home(usuario):
+
+# =======================
+# HOME
+# =======================
+def mostrar_home(socio):
     limpiar_pantalla()
 
     global fondo_home_img
     fondo_home_img = cargar_fondo(FONDO_HOME, (1000, 600))
     if fondo_home_img:
         tk.Label(root, image=fondo_home_img).place(x=0, y=0, relwidth=1, relheight=1)
-    else:
-        root.config(bg="#002B5C")
 
-    # Encabezado
-    header = tk.Frame(root, bg="#000000", height=60)
+    header = tk.Frame(root, bg="black", height=60)
     header.pack(fill="x")
-    tk.Label(header, text=f"Bienvenido al Club Atlético Vélez Sarsfield, {usuario}",
-             font=("Helvetica", 16, "bold"), fg="white", bg="#000000").pack(side="left", padx=20)
+
+    tk.Label(header, text=f"Bienvenido, {socio[1]}",
+             fg="white", bg="black", font=("Helvetica", 18, "bold")).pack(side="left", padx=25)
+
     tk.Button(header, text="Cerrar sesión", bg="#0033A0", fg="white",
-              command=mostrar_login).pack(side="right", padx=20, pady=10)
+              font=("Arial", 11, "bold"),
+              command=mostrar_login, cursor="hand2").pack(side="right", padx=20)
 
-    # Cuerpo principal
-    frame = tk.Frame(root, bg="white", bd=5)
-    frame.place(relx=0.5, rely=0.55, anchor="center", width=700, height=400)
+    sombra = tk.Frame(root, bg="medium blue", width=420, height=420)
+    sombra.place(relx=0.5, rely=0.55, anchor="center", x=4, y=4) 
 
-    # Sección: Información general
-    tk.Label(frame, text="Sección de Socios", font=("Helvetica", 18, "bold"),
-             fg="#0033A0", bg="white").pack(pady=20)
-    tk.Label(frame, text="Aquí podrás consultar tus datos, cuotas y eventos del club.",
-             font=("Arial", 12), bg="white", fg="#222").pack(pady=10)
+    card = tk.Frame(root, bg="white", bd=0, width=420, height=420)
+    card.place(relx=0.5, rely=0.55, anchor="center")
 
-    # --- NUEVAS SECCIONES ---
-    info_frame = tk.Frame(frame, bg="#F2F2F2", bd=3, relief="ridge")
-    info_frame.pack(pady=10, fill="x", padx=50)
+    tk.Label(card, text="Datos del Socio",
+             font=("Helvetica", 20, "bold"),
+             fg="#0033A0", bg="white").pack(pady=(25, 5))
 
-    tk.Label(info_frame, text="Datos del Usuario", bg="#F2F2F2",
-             font=("Helvetica", 14, "bold"), fg="#0033A0").pack(pady=5)
-    tk.Label(info_frame, text=f"Usuario: {usuario}", bg="#F2F2F2",
-             font=("Arial", 12)).pack()
-    tk.Label(info_frame, text="Categoría: Socio activo", bg="#F2F2F2",
-             font=("Arial", 12)).pack()
-    tk.Label(info_frame, text="Antigüedad: 1 año", bg="#F2F2F2",
-             font=("Arial", 12)).pack()
+    tk.Frame(card, bg="#0033A0", height=2, width=260).pack(pady=(0, 20))
 
-    cuota_frame = tk.Frame(frame, bg="#E8F5E9", bd=3, relief="ridge")
-    cuota_frame.pack(pady=10, fill="x", padx=50)
+    datos = [
+        ("Nombre", socio[1]),
+        ("Edad", socio[2]),
+        ("Tipo identificación", socio[3]),
+        ("Identificación", socio[4]),
+        ("Nacionalidad", socio[5]),
+        ("Usuario", socio[6]),
+        ("Estado", socio[9]),
+        ("Fecha de inscripción", socio[8]),
+    ]
 
-    estado_cuota = usuarios[usuario]["cuota"]
-    color_estado = "#00A859" if estado_cuota == "Al día" else "#FF0000"
+    for etiqueta, valor in datos:
+        fila = tk.Frame(card, bg="white")
+        fila.pack(anchor="w", padx=30, pady=6)
 
-    tk.Label(cuota_frame, text="Estado de Cuota", bg="#E8F5E9",
-             font=("Helvetica", 14, "bold"), fg="#0033A0").pack(pady=5)
-    tk.Label(cuota_frame, text=f"Estado actual: {estado_cuota}",
-             bg="#E8F5E9", fg=color_estado, font=("Arial", 12, "bold")).pack(pady=5)
+        tk.Label(fila, text=f"{etiqueta}:",
+                 font=("Arial", 12, "bold"),
+                 fg="#0033A0", bg="white").pack(side="left")
 
-    # Botón para simular pago
-    def pagar_cuota():
-        usuarios[usuario]["cuota"] = "Al día"
-        messagebox.showinfo("Pago exitoso", "Tu cuota fue actualizada a 'Al día'.")
-        mostrar_home(usuario)
-
-    tk.Button(frame, text="Pagar Cuota", bg="#00A859", fg="white",
-              width=20, command=pagar_cuota).pack(pady=10)
+        tk.Label(fila, text=f" {valor}",
+                 font=("Arial", 12),
+                 bg="white").pack(side="left")
 
 
-# --- INICIO ---
+crear_tablas()
+mostrar_login()
 root.mainloop()
